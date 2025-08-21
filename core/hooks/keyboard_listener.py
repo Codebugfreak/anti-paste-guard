@@ -7,6 +7,7 @@ from pynput import keyboard
 import structlog
 
 from .events import KeyEvent, KeyAction
+from core.utils.queueing import safe_put
 
 log = structlog.get_logger()
 
@@ -20,21 +21,22 @@ MOD_KEYS = {
     keyboard.Key.alt: "alt",
     keyboard.Key.alt_l: "alt",
     keyboard.Key.alt_r: "alt",
-    keyboard.Key.cmd: "cmd",      # macOS
+    keyboard.Key.cmd: "cmd",      # macOS / some Linux
     keyboard.Key.cmd_l: "cmd",
     keyboard.Key.cmd_r: "cmd",
-    # keyboard.Key.super: "cmd",    # some Linux maps
+    # keyboard.Key.super: "cmd",
 }
 
 def _key_to_str(k: keyboard.Key | keyboard.KeyCode) -> str:
     try:
         if isinstance(k, keyboard.KeyCode):
             return k.char if k.char else f"keycode_{k.vk or 'unknown'}"
-        return str(k).split(".")[-1]  # Named keys (enter, esc, f1…)
+        return str(k).split(".")[-1]
     except Exception:
         return "unknown"
 
 class KeyboardHook:
+    """Background pynput keyboard listener emitting KeyEvent into a queue."""
     def __init__(self, out_q: Queue):
         self.out_q = out_q
         self._mods: Set[str] = set()
@@ -66,11 +68,11 @@ class KeyboardHook:
         if key in MOD_KEYS:
             self._mods.add(MOD_KEYS[key])
         ev = KeyEvent(key=name, action=KeyAction.DOWN, mods=set(self._mods))
-        self.out_q.put(ev)
+        safe_put(self.out_q, ev)
 
     def _on_release(self, key):
         name = _key_to_str(key)
         if key in MOD_KEYS:
             self._mods.discard(MOD_KEYS[key])
         ev = KeyEvent(key=name, action=KeyAction.UP, mods=set(self._mods))
-        self.out_q.put(ev)
+        safe_put(self.out_q, ev)

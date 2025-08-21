@@ -1,14 +1,34 @@
-cat > .gitignore << 'EOF'
+# --- Python environment ---
 .venv/
+.env
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# --- Build artifacts ---
 dist/
 build/
 *.spec
-.DS_Store
-.env
-EOF
-.idea/
 *.egg-info/
+
+# --- IDE / editor ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- Logs ---
+*.log
+
+# --- Testing ---
+.coverage
+.pytest_cache/
+htmlcov/
+
+# --- Packaging ---
+*.whl
+
+# --- Misc ---
+*.bak

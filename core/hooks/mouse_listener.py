@@ -7,6 +7,7 @@ from pynput import mouse
 import structlog
 
 from .events import MouseEvent, MouseAction
+from core.utils.queueing import safe_put
 
 log = structlog.get_logger()
 
@@ -19,6 +20,7 @@ def _btn_to_str(btn: Optional[mouse.Button]) -> Optional[str]:
     return name
 
 class MouseHook:
+    """Background pynput mouse listener emitting MouseEvent into a queue."""
     def __init__(self, out_q: Queue):
         self.out_q = out_q
         self._listener: Optional[mouse.Listener] = None
@@ -50,7 +52,7 @@ class MouseHook:
             clicks=None,
             x=int(x), y=int(y),
         )
-        self.out_q.put(ev)
+        safe_put(self.out_q, ev)
 
     def _on_scroll(self, x, y, dx, dy):
         ev = MouseEvent(
@@ -58,4 +60,4 @@ class MouseHook:
             action=MouseAction.SCROLL,
             x=int(x), y=int(y),
         )
-        self.out_q.put(ev)
+        safe_put(self.out_q, ev)

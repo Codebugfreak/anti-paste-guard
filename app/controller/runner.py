@@ -1,31 +1,51 @@
-# app/controller/runner.py
 from __future__ import annotations
 import threading
-import time
 from typing import Optional
 import structlog
+from dataclasses import replace
 
 from core.hooks.keyboard_listener import KeyboardHook
 from core.hooks.mouse_listener import MouseHook
+from core.clipboard.clipboard_watcher import ClipboardWatcher
+from core.focus.focus_tracker import FocusTracker
 from app.controller.event_bus import event_queue
-from core.hooks.events import BaseEvent
+from app.controller.paste_classifier import PasteClassifier, PasteClassifierConfig
+from app.controller.context_state import ContextState
+from app.policy.whitelist import WhitelistPolicy
+from core.hooks.events import BaseEvent, FocusEvent
+from app.analytics.anomaly_engine import AnomalyEngine
+from app.analytics.config import AnomalyConfig
+
 
 log = structlog.get_logger()
 
 class HookRuntime:
-    """Starts/stops hooks; runs a consumer thread that you can later replace with the full analyzer."""
+    """Starts/stops hooks; annotates events with current app; delegates to classifier."""
     def __init__(self, on_event=None):
         self.kbd = KeyboardHook(event_queue)
         self.mouse = MouseHook(event_queue)
+        self.clip = ClipboardWatcher(event_queue, poll_sec=0.2, enable_session_digest=True)
+        self.focus = FocusTracker(event_queue, poll_sec=0.25)
+        self.anomaly = AnomalyEngine(event_queue, config=AnomalyConfig())
+
+        self.ctx = ContextState()
+        self.policy = WhitelistPolicy()
+
+        self.classifier = PasteClassifier(
+            event_queue,
+            config=PasteClassifierConfig(context_window_sec=1.0, context_cooldown_sec=0.3, primary_hint=True),
+            debug=False,
+        )
         self._consumer_thr: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
-        # simple callback so UI can reflect event counts
         self._on_event = on_event
 
     def start(self) -> None:
         self._stop_evt.clear()
         self.kbd.start()
         self.mouse.start()
+        self.clip.start()
+        self.focus.start()
         self._consumer_thr = threading.Thread(target=self._consume_loop, daemon=True)
         self._consumer_thr.start()
         log.info("hooks.runtime.start")
@@ -33,19 +53,44 @@ class HookRuntime:
     def stop(self) -> None:
         self.kbd.stop()
         self.mouse.stop()
+        self.clip.stop()
+        self.focus.stop()
         self._stop_evt.set()
         if self._consumer_thr:
             self._consumer_thr.join(timeout=1.0)
         log.info("hooks.runtime.stop")
 
     def _consume_loop(self):
-        # Minimal consumer: counts events and calls a callback.
         count = 0
         while not self._stop_evt.is_set():
             try:
                 ev: BaseEvent = event_queue.get(timeout=0.5)
             except Exception:
                 continue
+
+            # Focus update / attach app (unchanged)
+            if isinstance(ev, FocusEvent):
+                self.ctx.update(ev.app_name, ev.pid, ev.title, ev.t_mono)
+            else:
+                curr = self.ctx.get_current()
+                from dataclasses import replace
+                try:
+                    ev = replace(ev, app=curr.app_name)
+                except Exception:
+                    pass
+
+            # Paste classifier
+            try:
+                self.classifier.process(ev)
+            except Exception as e:
+                log.warning("classifier.error", err=str(e))
+
+            # Anomaly engine
+            try:
+                self.anomaly.process(ev)
+            except Exception as e:
+                log.warning("anomaly.error", err=str(e))
+
             count += 1
             if self._on_event:
                 try:

@@ -1,8 +1,9 @@
-# ui/main_window.py  (only showing new/changed parts)
 from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 from app.controller.runner import HookRuntime
+from tkinter import Listbox
+from core.hooks.events import AnomalyEvent
 
 class MainWindow(tk.Tk):
     def __init__(self):
@@ -13,6 +14,9 @@ class MainWindow(tk.Tk):
 
         self._content = ttk.Frame(self, padding=12)
         self._content.pack(fill="both", expand=True)
+        # see anomaly log
+        self.anom_list = Listbox(self._content, height=6)
+        self.anom_list.pack(fill="x", pady=(4,0))
 
         # top bar with a start/stop toggle & event count
         topbar = ttk.Frame(self._content)
@@ -53,8 +57,13 @@ class MainWindow(tk.Tk):
             self.set_status("Capture: OFF")
 
     def _on_event(self, ev, count: int):
-        # Very light UI update; avoid heavy work here.
         self.event_count_var.set(f"Events: {count}")
+        if isinstance(ev, AnomalyEvent):
+            line = f"[{ev.severity.value.upper()}] {ev.rule_id} — {ev.rationale}"
+            self.anom_list.insert(0, line)
+            # keep it short
+            if self.anom_list.size() > 50:
+                self.anom_list.delete(50, 'end')
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
