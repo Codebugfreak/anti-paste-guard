@@ -12,9 +12,10 @@ from app.controller.event_bus import event_queue
 from app.controller.paste_classifier import PasteClassifier, PasteClassifierConfig
 from app.controller.context_state import ContextState
 from app.policy.whitelist import WhitelistPolicy
-from core.hooks.events import BaseEvent, FocusEvent
+from core.hooks.events import BaseEvent, FocusEvent, AnomalyEvent
 from app.analytics.anomaly_engine import AnomalyEngine
 from app.analytics.config import AnomalyConfig
+from core.crypto.segment_store import SegmentStore, SegmentWriter
 
 
 log = structlog.get_logger()
@@ -27,7 +28,8 @@ class HookRuntime:
         self.clip = ClipboardWatcher(event_queue, poll_sec=0.2, enable_session_digest=True)
         self.focus = FocusTracker(event_queue, poll_sec=0.25)
         self.anomaly = AnomalyEngine(event_queue, config=AnomalyConfig())
-
+        self.store = SegmentStore()
+        self.seg_writer = SegmentWriter(self.store, flush_sec=60, max_events=500)
         self.ctx = ContextState()
         self.policy = WhitelistPolicy()
 
@@ -46,6 +48,7 @@ class HookRuntime:
         self.mouse.start()
         self.clip.start()
         self.focus.start()
+        self.seg_writer.start()
         self._consumer_thr = threading.Thread(target=self._consume_loop, daemon=True)
         self._consumer_thr.start()
         log.info("hooks.runtime.start")
@@ -58,6 +61,7 @@ class HookRuntime:
         self._stop_evt.set()
         if self._consumer_thr:
             self._consumer_thr.join(timeout=1.0)
+        self.seg_writer.stop()
         log.info("hooks.runtime.stop")
 
     def _consume_loop(self):
@@ -90,6 +94,17 @@ class HookRuntime:
                 self.anomaly.process(ev)
             except Exception as e:
                 log.warning("anomaly.error", err=str(e))
+
+            # 👇 persist every event (including AnomalyEvent) into encrypted segments
+            try:
+                self.seg_writer.add_event(ev)
+            except Exception as e:
+                log.warning("segment_writer.error", err=str(e))
+
+            # optional: log anomalies
+            if isinstance(ev, AnomalyEvent):
+                log.info("anomaly.flag", rule=ev.rule_id, severity=ev.severity.value, why=ev.rationale, features=ev.features, app=getattr(ev, "app", None))
+
 
             count += 1
             if self._on_event:

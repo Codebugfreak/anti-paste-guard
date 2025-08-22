@@ -1,0 +1,12 @@
+pynput
+pyperclip
+psutil
+pycryptodome
+cryptography
+blake3
+numpy
+matplotlib
+pandas
+reportlab
+loguru
+typing-extensions
