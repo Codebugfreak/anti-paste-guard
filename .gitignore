@@ -32,3 +32,8 @@ htmlcov/
 
 # --- Misc ---
 *.bak
+
+# --- Documentation builds ---
+*.pdf
+!User_Manual.pdf
+!AntiPasteGuard_ProjectPlan_and_Documentation.pdf
